@@ -1,9 +1,13 @@
 import requests
 
 from openhomedevice.RootDevice import RootDevice
-from openhomedevice.Soap import soapRequest
+from openhomedevice.Soap import soapRequest, subscribeRequest
 
 import xml.etree.ElementTree as etree
+
+import socket
+import threading
+import time
 
 class Device(object):
 
@@ -222,7 +226,10 @@ class Device(object):
         trackInfoXml = etree.fromstring(trackInfo)
         metadata = trackInfoXml[0][0].find("Metadata").text
 
-        if metadata is None:
+        return self.getTrackMetadata(metadata)
+        
+    def getTrackMetadata(self, metadata):
+        if metadata is None or not metadata:
             return {}
 
         metadataXml = etree.fromstring(metadata)
@@ -239,5 +246,62 @@ class Device(object):
         trackDetails['album'] =  album.text if album != None else None
         trackDetails['albumArt'] =  albumArt.text if albumArt != None else None
         trackDetails['artist'] =  artist.text if artist != None else None
-
+        
         return trackDetails
+        
+    def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
+        threading.Thread(target = self.SubscribeListen, args = (callbackHost, callbackPort, callbackFunction)).start()
+        
+        service = self.rootDevice.Device().Service("urn:av-openhome-org:serviceId:Info")
+        response = subscribeRequest(service.EventSubUrl(), service.Type(), callbackHost, callbackPort, timespan)
+        if response.status_code == 200:
+            self.subscribeSID = response.headers['SID']
+            self.subscribeTimeout = response.headers['TIMEOUT'].split('-')[1]
+
+    def SubscribeListen(self, callbackHost, callbackPort, callbackFunction):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((callbackHost, callbackPort))
+        sock.listen(0)
+        while True:
+            client, address = sock.accept()
+            client.setblocking(0)
+            try:
+                data = self.recv_timeout(client)
+                if data:
+                    #decode it to string, takeonly the body
+                    httpString = bytes.decode(data).split('\r\n\r\n')
+                    properties = {}
+                    for property in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
+                        if 'Metadata' != property[0].tag or not property[0].text:
+                            properties[property[0].tag] = property[0].text
+                        else:
+                            properties['Metadata'] = self.getTrackMetadata(property[0].text)
+                    callbackFunction(properties)
+                    client.send(b'HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 0\n\n')
+            finally:
+                client.shutdown(socket.SHUT_RDWR)
+                client.close()
+
+    def recv_timeout(self, the_socket, timeout = 2):
+        total_data=[];
+        data='';
+        
+        begin=time.time()
+        while True:
+            if total_data and time.time()-begin > timeout:
+                break
+            elif time.time()-begin > timeout*2:
+                break
+            
+            try:
+                data = the_socket.recv(4096)
+                if data:
+                    total_data.append(data)
+                    begin=time.time()
+                else:
+                    time.sleep(0.1)
+            except:
+                pass
+        
+        return b''.join(total_data)

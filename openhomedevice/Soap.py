@@ -1,4 +1,5 @@
 import requests
+import socket
 
 def soapRequest(location, service, fnName, fnParams):
     bodyString = '<?xml version="1.0"?>'
@@ -20,3 +21,16 @@ def soapRequest(location, service, fnName, fnParams):
     res.encoding = 'utf-8'
 
     return res.text.encode('utf-8')
+
+def subscribeRequest(location, service, callbackHost, callbackPort, subscribeTimeout):
+    headers = {
+        'Content-Type': 'text/xml',
+        'Timeout': 'Second-' + str(subscribeTimeout),
+        'Callback': '<http://' + callbackHost + ':' + str(callbackPort) + '>',
+        'NT': 'upnp:event'
+    }
+
+    res = requests.request(method = 'SUBSCRIBE', url = location, headers = headers)
+    res.encoding = 'utf-8'
+
+    return res
