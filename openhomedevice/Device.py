@@ -1,7 +1,7 @@
 import requests
 
 from openhomedevice.RootDevice import RootDevice
-from openhomedevice.Soap import soapRequest, subscribeRequest
+from openhomedevice.Soap import soapRequest, subscribeRequest, renewSubscriptionRequest
 
 import xml.etree.ElementTree as etree
 
@@ -247,16 +247,27 @@ class Device(object):
         trackDetails['albumArt'] =  albumArt.text if albumArt != None else None
         trackDetails['artist'] =  artist.text if artist != None else None
         
-        return trackDetails
+        return trackDetailsOB
         
     def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
+        if timespan <= 60:
+            timespan = 60
         threading.Thread(target = self.SubscribeListen, args = (callbackHost, callbackPort, callbackFunction)).start()
         
         service = self.rootDevice.Device().Service("urn:av-openhome-org:serviceId:Info")
-        response = subscribeRequest(service.EventSubUrl(), service.Type(), callbackHost, callbackPort, timespan)
+        response = subscribeRequest(service.EventSubUrl(), callbackHost, callbackPort, timespan)
         if response.status_code == 200:
             self.subscribeSID = response.headers['SID']
-            self.subscribeTimeout = response.headers['TIMEOUT'].split('-')[1]
+            self.subscribeTimeout = int(response.headers['TIMEOUT'].split('-')[1])
+            if self.subscribeTimeout >= 30:
+                self.subscribeTimeout = self.subscribeTimeout - 30
+            else:
+                self.subscribeTimeout = 30
+            threading.Timer(self.subscribeTimeout, self.RenewSubscription, args = (service.EventSubUrl(),)).start()
+
+    def RenewSubscription(self, eventLocation):
+        renewSubscriptionRequest(eventLocation, self.subscribeSID, self.subscribeTimeout)
+        threading.Timer(self.subscribeTimeout, self.RenewSubscription, args = (eventLocation,)).start()
 
     def SubscribeListen(self, callbackHost, callbackPort, callbackFunction):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -22,12 +22,22 @@ def soapRequest(location, service, fnName, fnParams):
 
     return res.text.encode('utf-8')
 
-def subscribeRequest(location, service, callbackHost, callbackPort, subscribeTimeout):
+def subscribeRequest(location, callbackHost, callbackPort, subscribeTimeout):
     headers = {
-        'Content-Type': 'text/xml',
         'Timeout': 'Second-' + str(subscribeTimeout),
         'Callback': '<http://' + callbackHost + ':' + str(callbackPort) + '>',
         'NT': 'upnp:event'
+    }
+
+    res = requests.request(method = 'SUBSCRIBE', url = location, headers = headers)
+    res.encoding = 'utf-8'
+
+    return res
+    
+def renewSubscriptionRequest(location, sid, subscribeTimeout):
+    headers = {
+        'SID': sid,
+        'Timeout': 'Second-' + str(subscribeTimeout)
     }
 
     res = requests.request(method = 'SUBSCRIBE', url = location, headers = headers)
