@@ -247,7 +247,7 @@ class Device(object):
         trackDetails['albumArt'] =  albumArt.text if albumArt != None else None
         trackDetails['artist'] =  artist.text if artist != None else None
         
-        return trackDetailsOB
+        return trackDetails
         
     def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
         if timespan <= 60:
