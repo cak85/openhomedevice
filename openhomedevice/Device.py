@@ -250,12 +250,19 @@ class Device(object):
         return trackDetails
 
     def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
+        """Subscribe to track info events."""
         self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
         
     def SubscribeTime(self, callbackHost, callbackPort, callbackFunction, timespan):
+        """Subscribe to time events."""
         self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
     
     def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
+        """Subscribe to events of given type.
+        
+        This method subscribes to the given event type and listens in a separate thread for notifications.
+        Since subscriptions may expire the subscription is renewed before the given timespan ihas elapsed.
+        """
         if timespan <= 60:
             timespan = 60
         
@@ -279,10 +286,16 @@ class Device(object):
             threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
 
     def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
+        """Renew the subscription.
+        
+        The subscription is renewed periodically, given the timespan parameter.
+        The subscription may be ended by unsubscribing.
+        """
         response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
         threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
 
     def __SubscribeListen(self, sock, subscribeSID, callbackHost, callbackPort, callbackFunction):
+        """Listen on the given socket and call callbackFunction with the response."""
         while True:
             client, address = sock.accept()
             client.setblocking(0)
@@ -310,6 +323,10 @@ class Device(object):
                 client.close()
 
     def __recv_timeout(self, the_socket, timeout = 1):
+        """Read data from the socket.
+        
+        Reading is stopped if no more data is received within given timeout.
+        """
         total_data=[];
         data='';
         
