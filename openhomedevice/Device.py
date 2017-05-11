@@ -1,7 +1,7 @@
 import requests
 
 from openhomedevice.RootDevice import RootDevice
-from openhomedevice.Soap import soapRequest, subscribeRequest, renewSubscriptionRequest
+from openhomedevice.Soap import soapRequest, subscribeRequest, unsubscribeRequest, renewSubscriptionRequest
 
 import xml.etree.ElementTree as etree
 
@@ -10,6 +10,8 @@ import threading
 import time
 
 class Device(object):
+
+    sidToSocket = {}
 
     def __init__(self, location):
         xmlDesc = requests.get(location).text.encode('utf-8')
@@ -256,20 +258,34 @@ class Device(object):
         :param callbackPort: The port
         :param callbackFunction: The function that sould be called in case of event notifications
         :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
-        :returns: Subscription Identifier (SID)
+        :returns: Subscription identifier (SID). Empty if subscribing fails.
         """
         return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
         
+    def UnsubscribeTrackInfo(self, sid):
+        """Unsubscribe from track info events.
+        
+        :param sid: The subscription identifier to unsubscribe from
+        """
+        self.__UnsubscribeEvent("urn:av-openhome-org:serviceId:Info", sid)
+        
     def SubscribeTime(self, callbackHost, callbackPort, callbackFunction, timespan):
-        """Subscribe to time events.
+        """Unsubscribe to time events.
         
         :param callbackHost: The host name or ip address of this machine. Will be used for notications
         :param callbackPort: The port
         :param callbackFunction: The function that sould be called in case of event notifications
         :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
-        :returns: Subscription Identifier (SID)
+        :returns: Subscription Identifier (SID). Empty if subscribing fails.
         """
         return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
+        
+    def UnsubscribeTime(self, sid):
+        """Unsubscribe from time events.
+        
+        :param sid: The subscription identifier to unsubscribe from
+        """
+        self.__UnsubscribeEvent("urn:av-openhome-org:serviceId:Time", sid)
     
     def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
         """Subscribe to events of given type.
@@ -291,6 +307,7 @@ class Device(object):
         response = subscribeRequest(service.EventSubUrl(), callbackHost, callbackPort, timespan)
         if response.status_code == 200:
             subscribeSID = response.headers['SID']
+            self.sidToSocket[subscribeSID] = sock
             subscribeTimeout = int(response.headers['TIMEOUT'].split('-')[1])
             if subscribeTimeout >= 30:
                 subscribeTimeout = subscribeTimeout - 30
@@ -298,7 +315,16 @@ class Device(object):
                 subscribeTimeout = 30
             threading.Thread(target = self.__SubscribeListen, args = (sock, subscribeSID, callbackHost, callbackPort, callbackFunction)).start()
             threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
-        return subscribeSID
+            return subscribeSID
+        else:
+            return ""
+        
+    def __UnsubscribeEvent(self, serviceUrl, sid):
+        """Unsubscribes from events with the given sid."""
+        service = self.rootDevice.Device().Service(serviceUrl)
+        self.sidToSocket[sid].shutdown(socket.SHUT_RDWR)
+        self.sidToSocket[sid].close()
+        self.sidToSocket.pop(sid)
 
     def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
         """Renew the subscription.
@@ -307,12 +333,16 @@ class Device(object):
         The subscription may be ended by unsubscribing.
         """
         response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
-        threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
+        if response.status_code == 200:
+            threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
 
     def __SubscribeListen(self, sock, subscribeSID, callbackHost, callbackPort, callbackFunction):
         """Listen on the given socket and call callbackFunction with the response."""
         while True:
-            client, address = sock.accept()
+            try:
+                client, address = sock.accept()
+            except:
+                break
             client.setblocking(0)
             try:
                 data = self.__recv_timeout(client)
