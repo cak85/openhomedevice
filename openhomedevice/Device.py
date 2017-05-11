@@ -258,7 +258,13 @@ class Device(object):
     def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
         if timespan <= 60:
             timespan = 60
-        threading.Thread(target = self.__SubscribeListen, args = (callbackHost, callbackPort, callbackFunction)).start()
+        
+        # Init socket, so that we get the response of the subscribe request.
+        # Later the socket is given to the subscription listener for response handling
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((callbackHost, callbackPort))
+        sock.listen(0)
         
         service = self.rootDevice.Device().Service(serviceUrl)
         response = subscribeRequest(service.EventSubUrl(), callbackHost, callbackPort, timespan)
@@ -269,33 +275,36 @@ class Device(object):
                 subscribeTimeout = subscribeTimeout - 30
             else:
                 subscribeTimeout = 30
+            threading.Thread(target = self.__SubscribeListen, args = (sock, subscribeSID, callbackHost, callbackPort, callbackFunction)).start()
             threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
 
     def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
         response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
         threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
 
-    def __SubscribeListen(self, callbackHost, callbackPort, callbackFunction):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((callbackHost, callbackPort))
-        sock.listen(0)
+    def __SubscribeListen(self, sock, subscribeSID, callbackHost, callbackPort, callbackFunction):
         while True:
             client, address = sock.accept()
             client.setblocking(0)
             try:
                 data = self.__recv_timeout(client)
                 if data:
-                    #decode it to string, takeonly the body
+                    #decode it to string, take only the body
                     httpString = bytes.decode(data).split('\r\n\r\n')
                     properties = {}
-                    for property in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
-                        if 'Metadata' != property[0].tag or not property[0].text:
-                            properties[property[0].tag] = property[0].text
-                        else:
-                            properties['Metadata'] = self.getTrackMetadata(property[0].text)
-                    callbackFunction(properties)
-                    client.send(b'HTTP/1.1 200 OK\r\n\r\n')
+                    try:
+                        # Fetch SID from HTTP header, check if corresponds to our subscription SID
+                        responseSID = httpString[0].split('SID: ')[1].split('\r\n')[0]
+                        if responseSID == subscribeSID:
+                            for property in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
+                                if 'Metadata' != property[0].tag or not property[0].text:
+                                    properties[property[0].tag] = property[0].text
+                                else:
+                                    properties['Metadata'] = self.getTrackMetadata(property[0].text)
+                            callbackFunction(properties)
+                            client.send(b'HTTP/1.1 200 OK\r\n\r\n')
+                    except:
+                        pass
             finally:
                 client.shutdown(socket.SHUT_RDWR)
                 client.close()
