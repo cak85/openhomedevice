@@ -250,12 +250,26 @@ class Device(object):
         return trackDetails
 
     def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
-        """Subscribe to track info events."""
-        self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
+        """Subscribe to track info events.
+        
+        :param callbackHost: The host name or ip address of this machine. Will be used for notications
+        :param callbackPort: The port
+        :param callbackFunction: The function that sould be called in case of event notifications
+        :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
+        :returns: Subscription Identifier (SID)
+        """
+        return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
         
     def SubscribeTime(self, callbackHost, callbackPort, callbackFunction, timespan):
-        """Subscribe to time events."""
-        self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
+        """Subscribe to time events.
+        
+        :param callbackHost: The host name or ip address of this machine. Will be used for notications
+        :param callbackPort: The port
+        :param callbackFunction: The function that sould be called in case of event notifications
+        :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
+        :returns: Subscription Identifier (SID)
+        """
+        return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
     
     def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
         """Subscribe to events of given type.
@@ -284,6 +298,7 @@ class Device(object):
                 subscribeTimeout = 30
             threading.Thread(target = self.__SubscribeListen, args = (sock, subscribeSID, callbackHost, callbackPort, callbackFunction)).start()
             threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
+        return subscribeSID
 
     def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
         """Renew the subscription.
