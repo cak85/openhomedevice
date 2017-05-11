@@ -248,28 +248,34 @@ class Device(object):
         trackDetails['artist'] =  artist.text if artist != None else None
         
         return trackDetails
-        
+
     def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
+        self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
+        
+    def SubscribeTime(self, callbackHost, callbackPort, callbackFunction, timespan):
+        self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
+    
+    def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
         if timespan <= 60:
             timespan = 60
-        threading.Thread(target = self.SubscribeListen, args = (callbackHost, callbackPort, callbackFunction)).start()
+        threading.Thread(target = self.__SubscribeListen, args = (callbackHost, callbackPort, callbackFunction)).start()
         
-        service = self.rootDevice.Device().Service("urn:av-openhome-org:serviceId:Info")
+        service = self.rootDevice.Device().Service(serviceUrl)
         response = subscribeRequest(service.EventSubUrl(), callbackHost, callbackPort, timespan)
         if response.status_code == 200:
-            self.subscribeSID = response.headers['SID']
-            self.subscribeTimeout = int(response.headers['TIMEOUT'].split('-')[1])
-            if self.subscribeTimeout >= 30:
-                self.subscribeTimeout = self.subscribeTimeout - 30
+            subscribeSID = response.headers['SID']
+            subscribeTimeout = int(response.headers['TIMEOUT'].split('-')[1])
+            if subscribeTimeout >= 30:
+                subscribeTimeout = subscribeTimeout - 30
             else:
-                self.subscribeTimeout = 30
-            threading.Timer(self.subscribeTimeout, self.RenewSubscription, args = (service.EventSubUrl(),)).start()
+                subscribeTimeout = 30
+            threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
 
-    def RenewSubscription(self, eventLocation):
-        renewSubscriptionRequest(eventLocation, self.subscribeSID, self.subscribeTimeout)
-        threading.Timer(self.subscribeTimeout, self.RenewSubscription, args = (eventLocation,)).start()
+    def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
+        response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
+        threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
 
-    def SubscribeListen(self, callbackHost, callbackPort, callbackFunction):
+    def __SubscribeListen(self, callbackHost, callbackPort, callbackFunction):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((callbackHost, callbackPort))
@@ -278,7 +284,7 @@ class Device(object):
             client, address = sock.accept()
             client.setblocking(0)
             try:
-                data = self.recv_timeout(client)
+                data = self.__recv_timeout(client)
                 if data:
                     #decode it to string, takeonly the body
                     httpString = bytes.decode(data).split('\r\n\r\n')
@@ -289,12 +295,12 @@ class Device(object):
                         else:
                             properties['Metadata'] = self.getTrackMetadata(property[0].text)
                     callbackFunction(properties)
-                    client.send(b'HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 0\n\n')
+                    client.send(b'HTTP/1.1 200 OK\r\n\r\n')
             finally:
                 client.shutdown(socket.SHUT_RDWR)
                 client.close()
 
-    def recv_timeout(self, the_socket, timeout = 2):
+    def __recv_timeout(self, the_socket, timeout = 1):
         total_data=[];
         data='';
         
