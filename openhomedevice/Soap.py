@@ -34,6 +34,16 @@ def subscribeRequest(location, callbackHost, callbackPort, subscribeTimeout):
 
     return res
     
+def unsubscribeRequest(location, sid):
+    headers = {
+        'SID': sid
+    }
+
+    res = requests.request(method = 'UNSUBSCRIBE', url = location, headers = headers)
+    res.encoding = 'utf-8'
+
+    return res
+    
 def renewSubscriptionRequest(location, sid, subscribeTimeout):
     headers = {
         'SID': sid,
