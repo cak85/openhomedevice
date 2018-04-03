@@ -1,5 +1,4 @@
 import requests
-import re
 
 from openhomedevice.RootDevice import RootDevice
 from openhomedevice.TrackInfoParser import TrackInfoParser
@@ -389,7 +388,6 @@ class Device(object):
         
     def __UnsubscribeEvent(self, serviceUrl, sid):
         """Unsubscribes from events with the given sid."""
-        service = self.rootDevice.Device().Service(serviceUrl)
         self.sidToSocket[sid].shutdown(socket.SHUT_RDWR)
         self.sidToSocket[sid].close()
         self.sidToSocket.pop(sid)
@@ -408,7 +406,7 @@ class Device(object):
         """Listen on the given socket and call callbackFunction with the response."""
         while True:
             try:
-                client, address = sock.accept()
+                client = sock.accept()
             except:
                 break
             client.setblocking(0)
@@ -422,11 +420,11 @@ class Device(object):
                         # Fetch SID from HTTP header, check if corresponds to our subscription SID
                         responseSID = httpString[0].split('SID: ')[1].split('\r\n')[0]
                         if responseSID == subscribeSID:
-                            for property in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
-                                if 'Metadata' != property[0].tag or not property[0].text:
-                                    properties[property[0].tag] = property[0].text
+                            for prop in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}prop'):
+                                if 'Metadata' != prop[0].tag or not prop[0].text:
+                                    properties[prop[0].tag] = prop[0].text
                                 else:
-                                    properties['Metadata'] = self.getTrackMetadata(property[0].text)
+                                    properties['Metadata'] = self.getTrackMetadata(prop[0].text)
                             callbackFunction(properties)
                             client.send(b'HTTP/1.1 200 OK\r\n\r\n')
                     except:
@@ -445,11 +443,8 @@ class Device(object):
         
         begin=time.time()
         while True:
-            if total_data and time.time()-begin > timeout:
+            if (total_data and time.time()-begin > timeout) or time.time()-begin > timeout*2:
                 break
-            elif time.time()-begin > timeout*2:
-                break
-            
             try:
                 data = the_socket.recv(4096)
                 if data:
