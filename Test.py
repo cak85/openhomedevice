@@ -8,4 +8,4 @@ elementString3 = b'<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope
 
 trackInfoParser = TrackInfoParser(elementString3)
 
-print trackInfoParser.TrackInfo()
+print(trackInfoParser.TrackInfo())
