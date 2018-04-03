@@ -1,5 +1,11 @@
 *.pyc
+tmp/
+*.tmp
+*.bak
 .vscode
 dist
 MANIFEST
 App.py
+.project
+.pydevproject
+/nppBackup/
