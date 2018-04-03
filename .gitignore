@@ -10,3 +10,6 @@ App.py
 .project
 .pydevproject
 /nppBackup/
+/build/
+/*.egg-info/
+/.eggs/
