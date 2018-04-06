@@ -28,6 +28,7 @@ class TestDevice(TestCase):
                 mock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 mock_socket.connect((self.ownIp, self.port))
                 mock_socket.sendall(self.upnpNotify)
+                mock_socket.close()
                 f.wait(5)
                 device.UnsubscribeTrackInfo(sid)
                 mock.assert_called_once()
