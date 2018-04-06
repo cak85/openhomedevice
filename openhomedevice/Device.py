@@ -387,6 +387,7 @@ class Device(object):
             self.sidToTimer[subscribeSID] = timer
             return subscribeSID
         else:
+            sock.close()
             return ""
         
     def __UnsubscribeEvent(self, serviceUrl, sid):
@@ -442,7 +443,10 @@ class Device(object):
                     except:
                         pass
             finally:
-                client.shutdown(socket.SHUT_RDWR)
+                try:
+                    client.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
                 client.close()
 
     def __recv_timeout(self, the_connection, timeout = 1):
