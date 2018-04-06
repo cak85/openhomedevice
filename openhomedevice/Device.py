@@ -13,6 +13,7 @@ import time
 class Device(object):
 
     sidToSocket = {}
+    sidToTimer = {}
 
     def __init__(self, location):
         xmlDesc = requests.get(location).text.encode('utf-8')
@@ -367,7 +368,7 @@ class Device(object):
         # Later the socket is given to the subscription listener for response handling
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((callbackHost, callbackPort))
+        sock.bind(('', callbackPort))
         sock.listen(0)
         
         service = self.rootDevice.Device().Service(serviceUrl)
@@ -381,16 +382,24 @@ class Device(object):
             else:
                 subscribeTimeout = 30
             threading.Thread(target = self.__SubscribeListen, args = (sock, subscribeSID, callbackHost, callbackPort, callbackFunction)).start()
-            threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout)).start()
+            timer = threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout))
+            timer.start()
+            self.sidToTimer[subscribeSID] = timer
             return subscribeSID
         else:
             return ""
         
     def __UnsubscribeEvent(self, serviceUrl, sid):
         """Unsubscribes from events with the given sid."""
-        self.sidToSocket[sid].shutdown(socket.SHUT_RDWR)
+        unsubscribeRequest(serviceUrl, sid)
+        try:
+            self.sidToSocket[sid].shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self.sidToSocket[sid].close()
         self.sidToSocket.pop(sid)
+        self.sidToTimer[sid].cancel()
+        self.sidToTimer.pop(sid)
 
     def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
         """Renew the subscription.
@@ -400,13 +409,15 @@ class Device(object):
         """
         response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
         if response.status_code == 200:
-            threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout)).start()
+            timer = threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout))
+            timer.start()
+            self.sidToTimer[subscribeSID] = timer
 
     def __SubscribeListen(self, sock, subscribeSID, callbackHost, callbackPort, callbackFunction):
         """Listen on the given socket and call callbackFunction with the response."""
         while True:
             try:
-                client = sock.accept()
+                client = sock.accept()[0]
             except:
                 break
             client.setblocking(0)
@@ -420,11 +431,12 @@ class Device(object):
                         # Fetch SID from HTTP header, check if corresponds to our subscription SID
                         responseSID = httpString[0].split('SID: ')[1].split('\r\n')[0]
                         if responseSID == subscribeSID:
-                            for prop in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}prop'):
+                            for prop in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
                                 if 'Metadata' != prop[0].tag or not prop[0].text:
                                     properties[prop[0].tag] = prop[0].text
                                 else:
-                                    properties['Metadata'] = self.getTrackMetadata(prop[0].text)
+                                    trackInfoParser = TrackInfoParser(prop[0].text)
+                                    properties['Metadata'] = trackInfoParser.TrackInfo()
                             callbackFunction(properties)
                             client.send(b'HTTP/1.1 200 OK\r\n\r\n')
                     except:
@@ -433,8 +445,8 @@ class Device(object):
                 client.shutdown(socket.SHUT_RDWR)
                 client.close()
 
-    def __recv_timeout(self, the_socket, timeout = 1):
-        """Read data from the socket.
+    def __recv_timeout(self, the_connection, timeout = 1):
+        """Read data from the connection.
         
         Reading is stopped if no more data is received within given timeout.
         """
@@ -446,7 +458,7 @@ class Device(object):
             if (total_data and time.time()-begin > timeout) or time.time()-begin > timeout*2:
                 break
             try:
-                data = the_socket.recv(4096)
+                data = the_connection.recv(4096)
                 if data:
                     total_data.append(data)
                     begin=time.time()
