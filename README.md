@@ -32,6 +32,15 @@ Device(location)
     SetSource(index) #positive integer (use Sources() for indices)
 ```
 
+#### Subscribing
+
+```python
+    SubscribeTrackInfo(callbackHost, callbackPort, callbackFunction, timespan) #string (sid)
+    UnsubscribeTrackInfo(sid)
+    SubscribeTime(callbackHost, callbackPort, callbackFunction, timespan) #string (sid)
+    UnsubscribeTime(sid)
+```
+
 #### Configuration
 
 ```python
@@ -121,6 +130,10 @@ Device(location)
 }
 ```
 
+##### Subscription Responses
+
+The subscription methods call the given callback with a dictionary, where the track info can be found in the field **Metadata** (the metadata is formatted using the `TrackInfo()` method). Other fields of the dictionary are e.g. , **BitRate** (track info), **Duration** (both track and time info), **Seconds** (time info), etc. For a complete list of possible fields please refer to the OpenHome Media (ohMedia) Server specification. Be aware that only properties that have changed are included in the dictionary.
+
 ##### Playing A Track
 
 Use this to play a short audio track, a podcast Uri or radio station Uri. The audio will be played using the radio source of the device. The `trackDetails` object should be the same as the one described in the `TrackInfo` section above. 
@@ -134,7 +147,9 @@ Use this to play a short audio track, a podcast Uri or radio station Uri. The au
     openhomeDevice.PlayMedia(trackDetails)
 ```
 
-## Example
+## Examples
+
+### Simple Example
 
 ```python
 from openhomedevice.Device import Device
@@ -161,4 +176,45 @@ if __name__ == '__main__':
         print("MUTED    : %s" % openhomeDevice.IsMuted())
         print("SOURCES  : %s" % openhomeDevice.Sources())
     print("----")
+```
+
+### Subscription Example
+
+```python
+import threading
+from openhomedevice.Device import Device
+
+f1 = threading.Event()
+f2 = threading.Event()
+
+def track_info_callback(data):
+    print("Track Info: " + str(data))
+    track_info = metadata['Metadata']
+    try:
+        print("Song: " + track_info['title'] + " by " + track_info['artist'])
+    except Exception as e:
+        print("Failed to get track info:" + getattr(e, 'message', str(e)))
+    f1.set()
+        
+def time_callback(data):
+    print("Time Info: " + str(data))
+    try:
+        elapsed_time = int(metadata['Seconds'])
+        print("Elapsed Time: " + elapsed_time)
+    except Exception as e:
+        print("Failed to get song progress:" + getattr(e, 'message', str(e)))
+    f2.set()
+
+if __name__ == '__main__':
+
+    RENDERER_ADDRESS = "http://192.168.1.122:55178/4c494e4e-0026-0f21-fd5a-01387403013f/Upnp/device.xml" # remote upnp renderer
+    CALLBACK_ADDRESS = "192.168.0.230" # own IP
+
+    openhome_device = Device(RENDERER_ADDRESS)
+    openhome_device.SubscribeTrackInfo(CALLBACK_ADDRESS, 50030, track_info_callback, 600)
+    openhome_device.SubscribeTime(CALLBACK_ADDRESS, 50031, time_callback, 600)
+    
+    f1.wait()
+    f2.wait()
+
 ```
