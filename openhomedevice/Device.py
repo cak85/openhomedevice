@@ -1,13 +1,19 @@
 import requests
-import re
 
 from openhomedevice.RootDevice import RootDevice
 from openhomedevice.TrackInfoParser import TrackInfoParser
-from openhomedevice.Soap import soapRequest
+from openhomedevice.Soap import soapRequest, subscribeRequest, unsubscribeRequest, renewSubscriptionRequest
 
 import xml.etree.ElementTree as etree
 
+import socket
+import threading
+import time
+
 class Device(object):
+
+    sidToSocket = {}
+    sidToTimer = {}
 
     def __init__(self, location):
         xmlDesc = requests.get(location).text.encode('utf-8')
@@ -308,7 +314,161 @@ class Device(object):
         service = self.rootDevice.Device().Service("urn:av-openhome-org:serviceId:Config")
         configValue = ("<Key>%s</Key><Value>%s</Value>" % (key, value))
         soapRequest(service.ControlUrl(), service.Type(), "SetValue", configValue)
-
+        
     def GetLog(self):
         service = self.rootDevice.Device().Service("urn:av-openhome-org:serviceId:Debug")
         return soapRequest(service.ControlUrl(), service.Type(), "GetLog", "").decode('utf-8').split("\n")
+
+    def SubscribeTrackInfo(self, callbackHost, callbackPort, callbackFunction, timespan):
+        """Subscribe to track info events.
+        
+        :param callbackHost: The host name or ip address of this machine. Will be used for notications
+        :param callbackPort: The port
+        :param callbackFunction: The function that sould be called in case of event notifications
+        :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
+        :returns: Subscription identifier (SID). Empty if subscribing fails.
+        """
+        return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Info", callbackHost, callbackPort, callbackFunction, timespan)
+        
+    def UnsubscribeTrackInfo(self, sid):
+        """Unsubscribe from track info events.
+        
+        :param sid: The subscription identifier to unsubscribe from
+        """
+        self.__UnsubscribeEvent("urn:av-openhome-org:serviceId:Info", sid)
+        
+    def SubscribeTime(self, callbackHost, callbackPort, callbackFunction, timespan):
+        """Unsubscribe to time events.
+        
+        :param callbackHost: The host name or ip address of this machine. Will be used for notications
+        :param callbackPort: The port
+        :param callbackFunction: The function that sould be called in case of event notifications
+        :param timespan: Timespan of the subscription. Nevertheless, the subscription will be renewed until unsubscribing
+        :returns: Subscription Identifier (SID). Empty if subscribing fails.
+        """
+        return self.__SubscribeEvent("urn:av-openhome-org:serviceId:Time", callbackHost, callbackPort, callbackFunction, timespan)
+        
+    def UnsubscribeTime(self, sid):
+        """Unsubscribe from time events.
+        
+        :param sid: The subscription identifier to unsubscribe from
+        """
+        self.__UnsubscribeEvent("urn:av-openhome-org:serviceId:Time", sid)
+    
+    def __SubscribeEvent(self, serviceUrl, callbackHost, callbackPort, callbackFunction, timespan):
+        """Subscribe to events of given type.
+        
+        This method subscribes to the given event type and listens in a separate thread for notifications.
+        Since subscriptions may expire the subscription is renewed before the given timespan ihas elapsed.
+        """
+        if timespan <= 60:
+            timespan = 60
+        
+        # Init socket, so that we get the response of the subscribe request.
+        # Later the socket is given to the subscription listener for response handling
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('', callbackPort))
+        sock.listen(0)
+        
+        service = self.rootDevice.Device().Service(serviceUrl)
+        response = subscribeRequest(service.EventSubUrl(), callbackHost, callbackPort, timespan)
+        if response.status_code == 200:
+            subscribeSID = response.headers['SID']
+            self.sidToSocket[subscribeSID] = sock
+            subscribeTimeout = int(response.headers['TIMEOUT'].split('-')[1])
+            if subscribeTimeout >= 30:
+                subscribeTimeout = subscribeTimeout - 30
+            else:
+                subscribeTimeout = 30
+            threading.Thread(target = self.__SubscribeListen, args = (sock, subscribeSID, callbackHost, callbackPort, callbackFunction)).start()
+            timer = threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (service.EventSubUrl(), subscribeSID, timespan, subscribeTimeout))
+            timer.start()
+            self.sidToTimer[subscribeSID] = timer
+            return subscribeSID
+        else:
+            sock.close()
+            return ""
+        
+    def __UnsubscribeEvent(self, serviceUrl, sid):
+        """Unsubscribes from events with the given sid."""
+        unsubscribeRequest(serviceUrl, sid)
+        try:
+            self.sidToSocket[sid].shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.sidToSocket[sid].close()
+        self.sidToSocket.pop(sid)
+        self.sidToTimer[sid].cancel()
+        self.sidToTimer.pop(sid)
+
+    def __RenewSubscription(self, eventLocation, subscribeSID, timespan, subscribeTimeout):
+        """Renew the subscription.
+        
+        The subscription is renewed periodically, given the timespan parameter.
+        The subscription may be ended by unsubscribing.
+        """
+        response = renewSubscriptionRequest(eventLocation, subscribeSID, timespan)
+        if response.status_code == 200:
+            timer = threading.Timer(subscribeTimeout, self.__RenewSubscription, args = (eventLocation, subscribeSID, timespan, subscribeTimeout))
+            timer.start()
+            self.sidToTimer[subscribeSID] = timer
+
+    def __SubscribeListen(self, sock, subscribeSID, callbackHost, callbackPort, callbackFunction):
+        """Listen on the given socket and call callbackFunction with the response."""
+        while True:
+            try:
+                client = sock.accept()[0]
+            except:
+                break
+            client.setblocking(0)
+            try:
+                data = self.__recv_timeout(client)
+                if data:
+                    #decode it to string, take only the body
+                    httpString = bytes.decode(data).split('\r\n\r\n')
+                    properties = {}
+                    try:
+                        # Fetch SID from HTTP header, check if corresponds to our subscription SID
+                        responseSID = httpString[0].split('SID: ')[1].split('\r\n')[0]
+                        if responseSID == subscribeSID:
+                            for prop in etree.fromstring(httpString[1]).iter('{urn:schemas-upnp-org:event-1-0}property'):
+                                if 'Metadata' != prop[0].tag or not prop[0].text:
+                                    properties[prop[0].tag] = prop[0].text
+                                else:
+                                    trackInfoParser = TrackInfoParser(prop[0].text)
+                                    properties['Metadata'] = trackInfoParser.TrackInfo()
+                            callbackFunction(properties)
+                            client.send(b'HTTP/1.1 200 OK\r\n\r\n')
+                    except:
+                        pass
+            finally:
+                try:
+                    client.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                client.close()
+
+    def __recv_timeout(self, the_connection, timeout = 1):
+        """Read data from the connection.
+        
+        Reading is stopped if no more data is received within given timeout.
+        """
+        total_data=[];
+        data='';
+        
+        begin=time.time()
+        while True:
+            if (total_data and time.time()-begin > timeout) or time.time()-begin > timeout*2:
+                break
+            try:
+                data = the_connection.recv(4096)
+                if data:
+                    total_data.append(data)
+                    begin=time.time()
+                else:
+                    time.sleep(0.1)
+            except:
+                pass
+        
+        return b''.join(total_data)

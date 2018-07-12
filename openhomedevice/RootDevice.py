@@ -1,7 +1,6 @@
 import re
 from openhomedevice import Service
 import xml.etree.ElementTree as etree
-from threading import Thread
 
 class RootDevice:
     def __init__(self, aDevDescXml, aLocation):
