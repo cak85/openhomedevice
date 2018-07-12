@@ -13,3 +13,4 @@ App.py
 /build/
 /*.egg-info/
 /.eggs/
+nodeids
