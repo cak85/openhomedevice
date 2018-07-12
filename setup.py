@@ -14,6 +14,6 @@ setup(
   keywords = ['upnp', 'dlna', 'openhome', 'linn', 'ds', 'music', 'render'],
   install_requires = ['requests', 'lxml'],
   classifiers = [],
-  test_suite='nose.collector',
-  tests_require=['nose'],
+  setup_requires=['pytest-runner'],
+  tests_require=['pytest'],
 )
